@@ -187,11 +187,11 @@ class SoundEngine:
         stream.start()
 
 class State:
-        def __init__(self, Color):
-            self.parent = Color
+    def __init__(self, Color):
+        self.parent = Color
 
-        def initialize(self): pass
-        def activate(self): pass
+    def initialize(self): pass
+    def activate(self): pass
     
 class Falling(State):
     def __init__(self, Color):

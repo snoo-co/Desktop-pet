@@ -1,7 +1,7 @@
 import sys, random
 from PyQt6.QtGui import *
 from PyQt6.QtCore import Qt, QTimer, QSize, QPoint, QRect
-from PyQt6.QtGui import QMouseEvent, QResizeEvent
+from PyQt6.QtGui import QContextMenuEvent, QMouseEvent, QResizeEvent
 from PyQt6.QtWidgets import *
 from PyQt6.QtWidgets import QWidget
 import sounddevice as sd
@@ -102,9 +102,28 @@ class PBody(QFrame):
         layout.addWidget(self.content)
         self.setLayout(layout)
 
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.DefaultContextMenu)
+        kill = QAction("Kill", self)
+        kill.triggered.connect(self.terminate)
+        self.trayMenu = QMenu()
+        self.trayMenu.addAction(kill)
+
+    def contextMenuEvent(self, e: QContextMenuEvent | None) -> None:
+        if (e):
+            self.trayMenu.exec(e.globalPos())
+
+    def terminate(self):
+        self.deleteLater()
+
+    def setSize(self, pbody_width, pbody_height):
+        self.setFixedSize(pbody_width, pbody_height)
+
 class PBase(QFrame):
     def __init__(self, parent, pbase_padding, pbody_width, pbody_height, pbar_name, pbar_height, pbar_btn_size) -> None:
         super().__init__(parent)
+        self.states = {"dragging" : Dragging(self)}
+        self.state = None
+
         self.setMouseTracking(True)
         self.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
         self.updateGeometry()
@@ -114,6 +133,10 @@ class PBase(QFrame):
         layout.setContentsMargins(0,0,0,0)
 
         self.body = PBody(self, pbody_width, pbody_height, pbar_name, pbar_height, pbar_btn_size)
+        self.body.trayMenu.clear()
+        kill = QAction("Kill", self)
+        kill.triggered.connect(sys.exit)
+        self.body.trayMenu.addAction(kill)
         
         layout.addWidget(self.body, 1, 1)
         layout.setRowMinimumHeight(0, pbase_padding)
@@ -123,28 +146,76 @@ class PBase(QFrame):
 
         self.setLayout(layout)
         self.adjustSize()
-
-        self.mouseCood = None
-        # 0: transition, 1: falling
-        self.state = None
-        self.isDragged = False
+        print(self.body.pos(), self.pos())
+        print(self.b_width(), self.b_height())
 
     def mousePressEvent(self, e):
-        if e.button() == Qt.MouseButton.LeftButton:
-            self.mouseCood = e.position().toPoint()
+        if e.button() == Qt.MouseButton.LeftButton and self.body.underMouse():
+            self.state =  self.states["dragging"]
+            self.state.initialize(e)
 
-    def mouseMoveEvent(self, event):
-        if self.mouseCood is not None:
-            coordinates = self.mapToParent(event.position().toPoint() - self.mouseCood)
-            self.move(coordinates.x(), coordinates.y())
-            self.isDragged = True
+    def mouseMoveEvent(self, e):
+        if (isinstance(self.state, Dragging)):
+            self.state.activate(e)
 
-    def mouseReleaseEvent(self, event):
-        self.mouseCood = None
-        if (self.isDragged):
-            self.isDragged = False
-            self.state = None
+    def mouseReleaseEvent(self, e):
+        if (isinstance(self.state, Dragging)):
+            self.state.deactivate()
         
+    def terminate(self):
+        self.deleteLater()
+
+    def b_height(self):
+        return self.body.height()
+    
+    def b_width(self):
+        return self.body.width()
+    
+    def walk(self, x, y):
+        x += self.x()
+        y += self.y()
+
+        difference = self.mapToGlobal(self.body.pos()) - self.pos()
+
+        x = max(-difference.x(), min(x, screen_geometry.width()  - self.b_width() - difference.x()))
+        y = max(-difference.y(), min(y, screen_geometry.height() - self.b_height() - difference.y()))
+        self.move(x, y)
+
+    def setPadding(self, pbase_padding):
+        layout = self.layout()
+        if (layout and isinstance(layout, QGridLayout)):
+            layout.setRowMinimumHeight(0, pbase_padding)
+            layout.setRowMinimumHeight(2, pbase_padding)
+            layout.setColumnMinimumWidth(0, pbase_padding)
+            layout.setColumnMinimumWidth(2, pbase_padding)
+
+class State:
+    def __init__(self, parent: PBase):
+        self.parent = parent
+
+    def initialize(self): pass
+    def activate(self): pass
+    def deactivate(self): pass
+
+class Dragging(State):
+    def __init__(self, parent:PBase):
+        super().__init__(parent)
+        self.mouseCood = None
+
+    def initialize(self, e):
+        self.mouseCood = e.position().toPoint()
+
+    def activate(self, e):
+        coordinates = self.parent.mapToParent(e.position().toPoint() - self.mouseCood)
+        self.parent.walk(coordinates.x() - self.parent.x(), coordinates.y() - self.parent.y())
+
+    def deactivate(self):
+        self.mouseCood = None
+        self.parent.state = None
+
+
+    
+
 class MainWindow(QMainWindow):
 
     def __init__(self):
