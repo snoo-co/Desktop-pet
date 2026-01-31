@@ -1,0 +1,25 @@
+PBar{
+    border-image: url(border/red_border_highres.png) 9 12 12 9 stretch;
+    border-width: 9 9 12 9;
+    border-bottom: none;
+}
+PBar PSquareButton {
+    border-image: url(btn/btn_maximize1.png);
+}
+PBar PSquareButton:hover {
+    border-image: url(btn/btn_maximize2.png);
+}
+
+PContent {
+    border-image: url(border/white_border_highres.png) 9 12 12 9 stretch;
+    border-width: 9 9 12 9;
+    border-top: none;
+}
+
+PBody {
+    background-color:green
+}
+
+PBase {
+    background-color: red
+}
