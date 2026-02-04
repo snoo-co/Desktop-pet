@@ -10,8 +10,25 @@ import numpy as np
 PBAR_BTN_SIZE = 36
 PBAR_HEIGHT = 60
 PBAR_NAME = "Hello World"
-PBODY_HEIGHT = 200
-PBODY_WIDTH = 250
+PBODY_HEIGHT = 100
+PBODY_WIDTH = 120
+
+class SoundEngine:
+    ONTHRESHOLD = 0.01
+    OFFTHRESHOLD = 0.00
+    def __init__(self):
+        self.music = False
+        samplerate = 44100
+
+        def callback(indata, frames, time, status):
+            if(np.max(np.abs(indata)) > self.ONTHRESHOLD):
+                self.music = True
+            elif(np.max(np.abs(indata)) < self.ONTHRESHOLD):
+                self.music = False
+        
+        stream = sd.InputStream(samplerate = samplerate, blocksize = 200, channels = 1, dtype = 'float32', callback = callback)
+        stream.start()
+
 
 class PBar(QFrame):
     def __init__(self, parent, name, height, btn_size):
@@ -152,11 +169,11 @@ class PBase(QFrame):
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton and self.body.underMouse():
             self.state =  self.states["dragging"]
-            self.state.initialize(e)
+            self.state.startDrag(e)
 
     def mouseMoveEvent(self, e):
         if (isinstance(self.state, Dragging)):
-            self.state.activate(e)
+            self.state.continueDrag(e)
 
     def mouseReleaseEvent(self, e):
         if (isinstance(self.state, Dragging)):
@@ -171,14 +188,29 @@ class PBase(QFrame):
     def b_width(self):
         return self.body.width()
     
+    def difference(self):
+        return self.mapToGlobal(self.body.pos()) - self.pos()
+    
+    def LEFTBOUND(self):
+        return -self.difference().x()
+
+    def RIGHTBOUND(self):
+        return screen_geometry.width()  - self.b_width()  - self.difference().x()
+
+    def FLOOR(self):
+        return screen_geometry.height()  - self.b_height() - self.difference().y()
+    
+    def CEILING(self):
+        return -self.difference().x()
+    
     def walk(self, x, y):
         x += self.x()
         y += self.y()
 
         difference = self.mapToGlobal(self.body.pos()) - self.pos()
 
-        x = max(-difference.x(), min(x, screen_geometry.width()  - self.b_width() - difference.x()))
-        y = max(-difference.y(), min(y, screen_geometry.height() - self.b_height() - difference.y()))
+        x = max(self.LEFTBOUND(), min(x, self.RIGHTBOUND()))
+        y = max(self.CEILING(), min(y, self.FLOOR()))
         self.move(x, y)
 
     def setPadding(self, pbase_padding):
@@ -189,6 +221,45 @@ class PBase(QFrame):
             layout.setColumnMinimumWidth(0, pbase_padding)
             layout.setColumnMinimumWidth(2, pbase_padding)
 
+class PMinimized(PBase):
+    def __init__(self, parent, pbase_padding, pbody_width, pbody_height, pbar_name, pbar_height, pbar_btn_size): 
+        super().__init__(parent, pbase_padding, pbody_width, pbody_height, pbar_name, pbar_height, pbar_btn_size)
+        minimizedStates = {"falling" : Falling(self), "walking" : Walking(self), "standing" : Standing(self), "climbing" : Climbing(self), "hanging" : Hanging(self)}
+        self.states.update(minimizedStates)
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.updatePet)
+        self.timer.start(70)
+    
+    def updatePet(self):
+        if (self.state == None):
+            # determine what state to transition to
+            # pet is at floor:
+            choices = []
+            weights = []
+            if (self.y() == self.FLOOR()):
+                choices += ["walking", "standing"]
+                weights += [3, 3]
+                # if (sound.music):
+                #     choices += []
+                #     weights += [1]
+            elif (self.y() == self.CEILING()):
+                choices += ["hanging"]
+                weights += [5]
+            if (self.x() == self.LEFTBOUND() or self.x() == self.RIGHTBOUND()):
+                choices += ["climbing"]
+                weights += [5]
+            if (self.y() < self.FLOOR() and self.y() >= self.CEILING()):
+                choices += ["falling"]
+                weights += [2]
+            
+            state = random.choices(choices, weights = weights, k = 1)
+            self.state = self.states[state[0]]
+            self.state.initialize()
+            self.state.activate()
+
+        else:
+            self.state.activate()
+    
 class State:
     def __init__(self, parent: PBase):
         self.parent = parent
@@ -202,10 +273,10 @@ class Dragging(State):
         super().__init__(parent)
         self.mouseCood = None
 
-    def initialize(self, e):
+    def startDrag(self, e):
         self.mouseCood = e.position().toPoint()
 
-    def activate(self, e):
+    def continueDrag(self, e):
         coordinates = self.parent.mapToParent(e.position().toPoint() - self.mouseCood)
         self.parent.walk(coordinates.x() - self.parent.x(), coordinates.y() - self.parent.y())
 
@@ -213,8 +284,75 @@ class Dragging(State):
         self.mouseCood = None
         self.parent.state = None
 
+class Falling(State):
+    def __init__(self, Pet):
+        super().__init__(Pet)
+        self.yv = 0
 
-    
+    def initialize(self):
+        self.yv = 0
+
+    def activate(self):
+        self.yv += 10
+        if (self.parent.y() + self.yv < self.parent.FLOOR()):
+            self.parent.walk(0, self.yv)
+        else:
+            self.parent.walk(0, self.parent.FLOOR() - self.parent.y())
+            self.parent.state = None
+
+class Walking(State):
+    def __init__(self, Pet):
+        super().__init__(Pet)
+        self.direction = 1
+        self.steps = 0
+
+    def initialize(self):
+        self.direction = random.choice([-1,1])
+        self.steps = (random.randrange(30, 40))  
+
+    def activate(self):
+        if (self.steps == 0):
+            self.parent.state = None
+        else:
+            self.steps -= 1
+            self.parent.walk(self.direction * 5, 0)
+
+class Standing(State):
+    def __init__(self, Pet):
+        super().__init__(Pet)
+        self.steps = 0
+
+    def initialize(self):
+        self.steps = (random.randrange(20, 30))   
+
+    def activate(self):
+        if (self.steps == 0):
+            self.parent.state = None
+        else:
+            self.steps -= 1
+
+class Climbing(State):
+    def __init__(self, Pet):
+        super().__init__(Pet)
+        self.direction = 1
+        self.steps = 0
+
+    def initialize(self):
+        self.direction = random.choice([-1,1])
+        self.steps = (random.randrange(30, 45))   
+
+    def activate(self):
+        if (self.steps == 0):
+            self.parent.state = None
+        else:
+            self.steps -= 1
+            self.parent.walk(0, self.direction * 5)
+
+class Hanging(Walking):
+    def __init__(self, Pet):
+        super().__init__(Pet)
+    # Change when have sprites
+
 
 class MainWindow(QMainWindow):
 
@@ -238,7 +376,7 @@ class MainWindow(QMainWindow):
         self.trayIcon.show()
         
         # self.pet = PBar(self, PBAR_NAME, PBAR_HEIGHT, PBAR_BTN_SIZE)
-        self.pet = PBase(self, 20, PBODY_WIDTH, PBODY_HEIGHT, PBAR_NAME, PBAR_HEIGHT, PBAR_BTN_SIZE)
+        self.pet = PMinimized(self, 20, PBODY_WIDTH, PBODY_HEIGHT, PBAR_NAME, PBAR_HEIGHT, PBAR_BTN_SIZE)
         # self.pet = PBody(self, PBODY_WIDTH, PBODY_HEIGHT, PBAR_NAME, PBAR_HEIGHT, PBAR_BTN_SIZE)
         self.pet.show()
         
@@ -257,5 +395,7 @@ screen = QApplication.primaryScreen()
 screen_geometry = screen.geometry()
 with open("style.qss", "r") as qss:
     app.setStyleSheet(qss.read())
+
+sound = SoundEngine()
 app.exec()
 
