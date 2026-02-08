@@ -132,14 +132,12 @@ class PBody(QFrame):
     def terminate(self):
         self.deleteLater()
 
-    def setSize(self, pbody_width, pbody_height):
-        self.setFixedSize(pbody_width, pbody_height)
-
 class PBase(QFrame):
     def __init__(self, parent, pbase_padding, pbody_width, pbody_height, pbar_name, pbar_height, pbar_btn_size) -> None:
         super().__init__(parent)
         self.states = {"dragging" : Dragging(self)}
         self.state = None
+        self.hoverArea = None
 
         self.setMouseTracking(True)
         self.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
@@ -195,13 +193,26 @@ class PBase(QFrame):
         return -self.difference().x()
 
     def RIGHTBOUND(self):
-        return screen_geometry.width()  - self.b_width()  - self.difference().x()
+        if (screen_geometry != None):
+            return screen_geometry.width()  - self.b_width()  - self.difference().x()
+        return 0
 
     def FLOOR(self):
-        return screen_geometry.height()  - self.b_height() - self.difference().y()
+        if (screen_geometry != None):
+            return screen_geometry.height()  - self.b_height() - self.difference().y()
+        return 0
     
     def CEILING(self):
         return -self.difference().x()
+    
+    def globalBodyGeom(self):
+        bodyCood = self.body.pos()
+        globalLeft = self.mapToParent(bodyCood) 
+        return QRect(globalLeft, self.body.size())
+    
+    def activateState(self, state):
+        self.state = self.states[state]
+        self.state.initialize()
     
     def walk(self, x, y):
         x += self.x()
@@ -259,7 +270,94 @@ class PMinimized(PBase):
 
         else:
             self.state.activate()
+
+    def mousePressEvent(self, e):
+        if (self.body.underMouse()):
+            self.activateState("standing")
+        super().mousePressEvent(e)
     
+class PMaximized(PBase):
+    MIN_WIDTH = 200
+    MIN_HEIGHT = 150
+    MAX_WIDTH = 400
+    MAX_HEIGHT = 400
+
+    CURSORS = {
+        "ULEFT": Qt.CursorShape.SizeFDiagCursor,
+        "URIGHT": Qt.CursorShape.SizeBDiagCursor,
+        "BLEFT": Qt.CursorShape.SizeBDiagCursor,
+        "BRIGHT": Qt.CursorShape.SizeFDiagCursor
+    }
+
+    RECT_SIZE = 15
+
+    def __init__(self, parent, pbase_padding, pbody_min_width, pbody_min_height, pbody_max_width, pbody_max_height, pbar_name, pbar_height, pbar_btn_size): 
+        super().__init__(parent, pbase_padding, pbody_min_width, pbody_min_height, pbar_name, pbar_height, pbar_btn_size)
+        maximizedStates = {"resizing" : Resizing(self, pbody_min_width, pbody_min_height, pbody_max_width, pbody_max_height)}
+        self.states.update(maximizedStates)
+
+    def showEvent(self, event):
+        self.setCorners()
+    
+    def centerRect(self, x, y):
+        return QRect(x - self.RECT_SIZE // 2, y - self.RECT_SIZE // 2, self.RECT_SIZE, self.RECT_SIZE)
+
+    def setCorners(self):
+        rect = self.globalBodyGeom()
+        self.corners = {
+            "ULEFT": self.centerRect(rect.topLeft().x(), rect.topLeft().y()),
+            "URIGHT": self.centerRect(rect.x() + rect.width(), rect.y()),
+            "BLEFT": self.centerRect(rect.x(), rect.y() + rect.height()),
+            "BRIGHT": self.centerRect(rect.x() + rect.width(), rect.y() + rect.height())
+        }
+
+    def walk(self, x, y):
+        super().walk(x, y)
+        self.setCorners()
+
+    def checkDragResize(self, e):
+        position = e.globalPosition().toPoint()
+        for corner, rect in self.corners.items():
+            if (rect.contains(position)):
+                self.setCursor(self.CURSORS[corner])
+                self.hoverArea = corner
+                return True
+        self.unsetCursor()
+        self.hoverArea = None
+        return False
+    
+    def mousePressEvent(self, e):
+        if (e is not None):
+            if not self.startDragResize(e):
+                super().mousePressEvent(e)
+
+    def startDragResize(self, e):
+        if (self.hoverArea is None):
+            return False
+        self.state = self.states["resizing"]
+        self.state.startResize(e, self.hoverArea)
+        return True
+    
+    def mouseReleaseEvent(self, e: QMouseEvent | None) -> None:
+        if (e is not None):
+            if (isinstance(self.state, Resizing)):
+                self.state.deactivate()
+            super().mouseReleaseEvent(e)
+
+    def resizeEvent(self, e: QResizeEvent | None) -> None:
+        self.setCorners()
+        super().resizeEvent(e)
+
+    def mouseMoveEvent(self, e):
+        if (isinstance(self.state, Resizing)):
+                self.state.continueResize(e)
+        else:
+            self.checkDragResize(e)
+            super().mouseMoveEvent(e)
+
+    def mouseDoubleClickEvent(self, a0: QMouseEvent | None) -> None:
+       pass
+
 class State:
     def __init__(self, parent: PBase):
         self.parent = parent
@@ -267,6 +365,60 @@ class State:
     def initialize(self): pass
     def activate(self): pass
     def deactivate(self): pass
+
+class Resizing(State):
+    def __init__(self, parent:PBase, pbody_min_width, pbody_min_height, pbody_max_width, pbody_max_height):
+        super().__init__(parent)
+        self.hoverArea = None
+        self.startCood = None
+        self.startGeom = None
+        self.startBodyGeom = None
+        self.MIN_WIDTH = pbody_min_width
+        self.MIN_HEIGHT = pbody_min_height
+        self.MAX_WIDTH = pbody_max_width
+        self.MAX_HEIGHT = pbody_max_height
+
+    def startResize(self, e, hoverArea):
+        self.startCood = e.globalPosition().toPoint()
+        self.startBodyGeom = self.parent.globalBodyGeom()
+        self.startGeom = self.parent.geometry()
+        self.hoverArea = hoverArea
+
+    def continueResize(self, e):
+        xSign = 1
+        ySign = 1
+        if (self.hoverArea == "BLEFT" or self.hoverArea == "ULEFT"):
+            xSign = -1
+        if (self.hoverArea == "ULEFT" or self.hoverArea == "URIGHT"):
+            ySign = -1
+        difference = e.globalPosition().toPoint() - self.startCood
+        
+        # new width is old width + difference moved by mouse, capped by max & min
+        newWidth = self.startBodyGeom.width() + xSign * difference.x()
+        newHeight = self.startBodyGeom.height() + ySign * difference.y()
+
+        newWidth = max(self.MIN_WIDTH, min(self.MAX_WIDTH, newWidth))
+        newHeight = max(self.MIN_HEIGHT, min(self.MAX_HEIGHT, newHeight))
+
+        self.parent.body.setFixedSize(newWidth, newHeight)
+        self.parent.adjustSize()
+        if (self.hoverArea == "BRIGHT"):
+            self.parent.move(self.startGeom.x(), self.startGeom.y())
+        elif (self.hoverArea == "BLEFT"):
+            self.parent.move(self.startGeom.x() + self.startBodyGeom.width() - newWidth, self.startGeom.y())
+        elif (self.hoverArea == "URIGHT"):
+            self.parent.move(self.startGeom.x(), self.startGeom.y() + self.startBodyGeom.height() - newHeight)
+        elif (self.hoverArea == "ULEFT"):
+            self.parent.move(self.startGeom.x() + self.startBodyGeom.width() - newWidth, self.startGeom.y() + self.startBodyGeom.height() - newHeight)
+
+    def deactivate(self):
+        self.hoverArea = None
+        self.parent.unsetCursor()
+        self.parent.state = None
+        self.startCood = None
+        self.startBodyGeom = None
+        self.startGeom = None
+ 
 
 class Dragging(State):
     def __init__(self, parent:PBase):
@@ -353,11 +505,52 @@ class Hanging(Walking):
         super().__init__(Pet)
     # Change when have sprites
 
+class Pet:
+    def __init__(self, parent, pbase_padding, pbody_min_width, pbody_min_height, pbody_max_width, pbody_max_height, pbar_name, pbar_height, pbar_btn_size): 
+        self.minimized = PMinimized(parent, pbase_padding, pbody_min_width, pbody_min_height, pbar_name, pbar_height, pbar_btn_size)
+        self.minimized.body.bar.button.clicked.connect(self.maximize)
+        self.minimized.hideEvent = self.minHide
+        self.minimized.showEvent = self.minShow
+
+        self.maximized = PMaximized(parent, pbase_padding, pbody_min_width, pbody_min_height, pbody_max_width, pbody_max_height, pbar_name, pbar_height, pbar_btn_size)
+        self.maximized.body.bar.button.clicked.connect(self.minimize)
+        self.maximized.showEvent = self.maxShow
+        self.minimized.show()
+
+
+    def maximize(self):
+        self.minimized.hide()
+        self.maximized.show()
+
+    def minHide(self, a0):
+        self.minimized.timer.stop()
+
+    def minShow(self, a0):
+        self.minimized.move(self.maximized.pos())
+        self.minimized.timer.start()
+        self.minimized.activateState("falling")
+
+    def maxShow(self, event):
+        self.maximized.move(self.minimized.pos())
+        self.maximized.walk(0,0)
+
+    def petPosition(self):
+        if self.minimized.isHidden():
+            return self.maximized.pos()
+        else:
+            return self.minimized.pos()
+
+
+    def minimize(self):
+        self.minimized.show()
+        self.maximized.hide()
+
 
 class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
+        self.setMouseTracking(True)
         self.setWindowTitle("Cute Pet")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -375,10 +568,11 @@ class MainWindow(QMainWindow):
         self.trayIcon.setContextMenu(trayMenu)
         self.trayIcon.show()
         
-        # self.pet = PBar(self, PBAR_NAME, PBAR_HEIGHT, PBAR_BTN_SIZE)
-        self.pet = PMinimized(self, 20, PBODY_WIDTH, PBODY_HEIGHT, PBAR_NAME, PBAR_HEIGHT, PBAR_BTN_SIZE)
-        # self.pet = PBody(self, PBODY_WIDTH, PBODY_HEIGHT, PBAR_NAME, PBAR_HEIGHT, PBAR_BTN_SIZE)
-        self.pet.show()
+        # self.pet = PMaximized(self, 20, PBODY_WIDTH, PBODY_HEIGHT, 400, 400, PBAR_NAME, PBAR_HEIGHT, PBAR_BTN_SIZE)
+        # self.pet1 = PMinimized(self, 20, PBODY_WIDTH, PBODY_HEIGHT, PBAR_NAME, PBAR_HEIGHT, PBAR_BTN_SIZE)
+        # self.pet1.show()
+        self.pet = Pet(self, 20, PBODY_WIDTH, PBODY_HEIGHT, 400, 400, PBAR_NAME, PBAR_HEIGHT, PBAR_BTN_SIZE)
+        # self.pet.show()
         
     # def addNewPet(self):
     #     pet = Pet(self.canvas)
@@ -386,6 +580,8 @@ class MainWindow(QMainWindow):
 
     def exitProgram(self):
         sys.exit()
+
+screen_geometry = None
 app = QApplication(sys.argv)
 
 window = MainWindow()
@@ -396,6 +592,6 @@ screen_geometry = screen.geometry()
 with open("style.qss", "r") as qss:
     app.setStyleSheet(qss.read())
 
-sound = SoundEngine()
+# sound = SoundEngine()
 app.exec()
 

@@ -1,41 +1,60 @@
-import sys
+import sys, random
+from PyQt6.QtGui import *
+from PyQt6.QtCore import Qt, QTimer, QSize, QPoint, QRect
+from PyQt6.QtGui import QContextMenuEvent, QMouseEvent, QResizeEvent
+from PyQt6.QtWidgets import *
+from PyQt6.QtWidgets import QWidget
+import sounddevice as sd
+import numpy as np
 
-from PyQt6.QtGui import QColor, QPalette
-from PyQt6.QtWidgets import (
-    QApplication,
-    QHBoxLayout,
-    QMainWindow,
-    QPushButton,
-    QStackedLayout,
-    QVBoxLayout,
-    QWidget,
-)
-
-class Color(QWidget):
-    def __init__(self, color):
-        super().__init__()
-        self.setAutoFillBackground(True)
-
-        palette = self.palette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(color))
-        self.setPalette(palette)
+PBAR_BTN_SIZE = 36
+PBAR_HEIGHT = 60
+PBAR_NAME = "Hello World"
+PBODY_HEIGHT = 100
+PBODY_WIDTH = 120
 
 class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("My App")
+        self.setMouseTracking(True)
+        self.setWindowTitle("Cute Pet")
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.showFullScreen()
+        
+        self.canvas = QWidget(self)
+        self.setCentralWidget(self.canvas)
+        self.trayIcon = QSystemTrayIcon(self)
+        self.trayIcon.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon))
+        massacre = QAction("Massacre", self)
+        massacre.triggered.connect(self.exitProgram)
+        trayMenu = QMenu()
+        trayMenu.addAction(massacre)
 
-        layout = QVBoxLayout()
+        self.trayIcon.setContextMenu(trayMenu)
+        self.trayIcon.show()
+        
+        
+    # def addNewPet(self):
+    #     pet = Pet(self.canvas)
+    #     pet.show()
 
-        layout.addWidget(Color("red"))
-        layout.addWidget(Color("green"))
-        layout.addWidget(Color("orange"))
-        layout.addWidget(Color("blue"))
+    def exitProgram(self):
+        sys.exit()
 
-        self.setCentralWidget(widget)
+    def mouseMoveEvent(self, e):
+        print(e.pos())
 
 app = QApplication(sys.argv)
+
 window = MainWindow()
+
 window.show()
+screen = QApplication.primaryScreen()
+screen_geometry = screen.geometry()
+with open("style.qss", "r") as qss:
+    app.setStyleSheet(qss.read())
+
 app.exec()
+

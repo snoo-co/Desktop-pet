@@ -18,8 +18,9 @@ PContent {
 /* 
 PBody {
     background-color:green
-}
+} */
 
 PBase {
-    background-color: red
-} */
+    /* background-color: red; */
+    background-color: rgba(0, 0, 0, 2);
+}
